@@ -1,0 +1,323 @@
+<define KEYWORDS ("let" "and" "or" "fun" "hd" "tl" "ref" "not" "if" "then" "else" "in " "end" "list" "val" "while" "do" "int" "real" "unit" "bool" )/>
+<define TOKEN ((":""=")(":"":")("<""=")(">""="))/>
+<define PARSE CODE.Goal />
+
+
+<******************************************************************>
+<* enumeration of different types, each a subtype of Type *>
+<******************************************************************>
+<code TypeInt match=CODE.Type/>
+<code TypeFloat match=CODE.Type/>
+<code TypeBool match=CODE.Type/>
+<code TypeUnit match=CODE.Type/>
+<code TypeList match=CODE.Type/>
+<code TypeRef  match=CODE.Type/>
+<code TypeNull match=CODE.Type/>
+<code TypeTuple match=CODE.Type/>
+<code TypeError match=CODE.Type/>
+<* PtrType is a struct with a single member variable: elemtype*>
+<code PtrType pars=(elemtype) match=CODE.Type/>
+
+<******************************************************************>
+<* Parsing and Translation schemes for type checking  *>
+<******************************************************************>
+<code ATTR pars=(exp,type) />
+<code LET pars=(one, two) match=CODE.Exp> {
+@one@;
+ @two@;
+} </code>
+<code WHILE2 pars=(one, two) match=CODE.Exp> while @one@ {
+@two@
+};</code>
+<code WHILE pars=(one, two) match=CODE.Exp> while @one@ { 
+@two@;
+}</code>
+<code PLIT pars=(one, two) match=CODE.Exp> @one@;
+ @two@ </code>
+<code ExpStmt pars=(one) match=CODE.Exp> @one@ </code>
+<code IF pars=(one, two, three) match=CODE.Exp> @one@? @two@ : @three@ </code>
+<code Par pars=(param)> (@param@)</code>
+<code VarDec pars=(var, type, exp) match=CODE.Exp> @type@ @var@ = @exp@ </code>
+<code Comma pars=(type, first, sec) match=CODE.Exp> new list<@type@>(@first@,@sec@) </code>
+<code ListVar pars=(t) match=CODE.Exp> list<@t@>* </code>
+<code LISTEXP pars=(exp2, exp, param2)> new list<@param2@> (@exp@,@exp2@)</code>
+<code LISTEXP2 pars=(param1, exp, param2)> new list<@param2@> (@exp@,0)</code>
+<code Bop pars=(op, opd1, opd2) match=CODE.Exp> @opd1 op opd2@ </code>
+<code Bop2 pars=(op, opd1, opd2) match=CODE.Exp> (@opd1 op opd2@) </code>
+<code Uop pars=(op, opd) match=CODE.Exp> @op opd@ </code>
+<code Uop2 pars=(op, opd) match=CODE.Exp> 
+@op@ 
+@opd@</code>
+
+
+<*new ast*>
+<code NewWhile pars=(one) match=CODE.Exp> while (@one@) </code> 
+<code NewIF pars=(one) match=CODE.Exp>  (@one@)? </code>
+<code NewSemi pars=(one) match=CODE.Exp>  @one@; </code>
+
+
+
+<code Goal pars=(program:LIST(CODE.StartML,"\n")) >
+@program@
+</code>
+
+<code StartML2 parse=(( (s=CODE.StartML) eval(return(s))))/>
+
+
+<code StartML parse=(((t=CODE.Path) (s=CODE.StartML) eval(return(Uop2#(t[ATTR.exp],s))))
+		    | ("" eval(return(""))) ) />
+
+<code Start2 parse=((CODE.Path2 (t=CODE.Start2a) eval(return(t)) ))/>
+<code Start2a parse =((eval(a=INHERIT)  ";" (s=CODE.Path2)  eval(INHERIT = ATTR#(PLIT#(a[ATTR.exp],s[ATTR.exp]),a[ATTR.type])) (t=CODE.Start2a) eval(return(t)))
+		     |( "" eval(return(INHERIT))))/>
+<code Path2 parse=(((t=CODE.Pt2Exp) eval(return(t))) 
+		  |((t=CODE.ValID)  eval(return(t)) ) 
+		  |("while" (y=CODE.Exp) "do" (z=CODE.Path2) eval(a=y[ATTR.type]; if(a!=TypeBool && checkNoError(a)){print("Line " LINE_NO ": type error: while" a )} return(ATTR#(WHILE#(y[ATTR.exp],z[ATTR.exp]),TypeUnit)) )))/>
+
+<code Path parse=(((s=CODE.Pt2Exp) ";" eval(return(ATTR#(Uop#(s[ATTR.exp],";"),s[ATTR.type]))))
+		 |((s=CODE.ValID) ";" eval(return(ATTR#(Uop#(s[ATTR.exp],";"),s[ATTR.type]))))
+		 |("while" (y=CODE.Exp) "do" (z=CODE.Path) eval(a=y[ATTR.type]; if(a!=TypeBool && checkNoError(a)){print("Line " LINE_NO ": type error: while" a )} return(ATTR#(WHILE2#(y[ATTR.exp],z[ATTR.exp]),TypeUnit))) )) />
+
+<code Split parse=((CODE.ValID (s=CODE.Split2) eval(return(s))))/>
+<code Split2 parse=((eval(a=INHERIT) ";"  (s=CODE.ValID)  eval(INHERIT = ATTR#(PLIT#(a[ATTR.exp],s[ATTR.exp]),a[ATTR.type])) (t=CODE.Split2) eval(return(t)) )
+		   | ("" eval(return(INHERIT)) )) /> 
+
+<code ValID parse=(((s=CODE.Var) eval(return(s))) |( (s=CODE.Fun) eval(return(s)) ))/>
+
+<code Var parse=(("val" (id=ID) ":" (v=CODE.MLtype)  "=" (u=CODE.Pt2Exp) eval( t= v[ATTR.type]; s=u[ATTR.type];
+						if(LookupVariable(id)){
+							if(InScope(id)){insert_entry(id,t); print("Line " LINE_NO ": type error: variable already defined: " id)} 
+							else{insert_entry(id,t)}}
+						else if(!(checkNoError(t))){insert_entry(id,t)} 
+						else if(t != s || t==TypeList#TypeNull) {print("Line " LINE_NO ": type error: val" id ":" t "=" s )} 
+						else{insert_entry(id,s)}
+						return(ATTR#(VarDec#(id,v[ATTR.exp],u[ATTR.exp]),TypeUnit)))))/>
+ 
+<code Fun parse=( ("fun" (id=ID) (a=CODE.ExpTemp) ":" (t=CODE.MLtype) eval(tup=(t::a); if(LookupVariable(id)){ print("Variable already defined:" id)} insert_entry(id,TypeTuple#(tup))  ) "=" (s=CODE.Pt2Exp) ))/> 
+
+<code MLtype parse=(( (t=CODE.MLtypeB) CODE.MLtype2 eval(return(t))))/>
+<code MLtype2 parse=(("*" CODE.MLtypeB CODE.MLtype2)
+		    | "") />
+<code MLtypeB parse=((CODE.MLtypeC (t=CODE.MLtypeB2) eval(return(t))))/>
+<code MLtypeB2 parse=((eval(a=INHERIT; INHERIT=ATTR#(a[ATTR.exp],TypeRef#(a[ATTR.type])))  "ref" (t=CODE.MLtypeB2) eval(return(t)))
+		     |(eval(a=INHERIT; INHERIT=ATTR#(a[ATTR.exp],TypeList#(a[ATTR.type]))) "list" (t=CODE.MLtypeB2) eval(return(ATTR#(ListVar#(t[ATTR.exp]),t[ATTR.type]))))
+		     |("" eval(return(INHERIT)))) />
+<code MLtypeC parse=(("int" eval(return(ATTR#("int",TypeInt)))) | ("real" eval(return(ATTR#("float",TypeFloat)))) | ("unit" eval(return(ATTR#("unit",TypeUnit)))) | ("bool" eval(return(ATTR#("bool",TypeBool))))) />
+
+<code Pt2Exp parse=(( (t=CODE.Pt2ExpA) eval(return(t))) )/>
+
+<code Pt2ExpA parse=(("if" (v=CODE.Exp) eval(t=v[ATTR.type]; if(t!=TypeBool && checkNoError(t)){print("Line " LINE_NO ": type error: if " t)})  
+							"then" (y=CODE.Pt2ExpA) "else" (z=CODE.Pt2ExpA) eval(a=y[ATTR.type]; b=z[ATTR.type]; 
+						if(a == b){return(ATTR#(IF#(v[ATTR.exp],y[ATTR.exp],z[ATTR.exp]),a))}
+						else if(checkNoError(a) && checkNoError(b)){print("Line " LINE_NO ": type error: " a "else" b);return(ATTR#(IF#(v[ATTR.exp],y[ATTR.exp],z[ATTR.exp]),a))}
+						else{return(return(ATTR#(IF#(v[ATTR.exp],y[ATTR.exp],z[ATTR.exp]),TypeError)))})) 
+		    | ((t=CODE.Pt2ExpB) eval(return(t))) )/>
+
+<code Pt2ExpB parse=(("let" eval(push_scope())  (s=CODE.Split) "in" (t=CODE.Start2) "end" eval(pop_scope(); return(ATTR#(LET#(s[ATTR.exp],t[ATTR.exp]),TypeUnit))))
+		    |(t=CODE.Pt2ExpC eval(return(t) )))/>
+
+<code Pt2ExpC parse=((CODE.Exp (t=CODE.Pt2ExpD) eval(return(t))))/>
+<code Pt2ExpD parse=((eval(y=INHERIT) ":=" (v=CODE.Exp) eval(t=v[ATTR.type]; INHERIT=y[ATTR.type];  x=y[ATTR.type]; 
+					if(!(x: TypeRef#(a)) || a != t ){
+							if(checkNoError(t) && checkNoError(x) ){print( "Line " LINE_NO ": type error: " INHERIT " := " t) }} 
+					return(ATTR#(Bop#("=",y[ATTR.exp],v[ATTR.exp] ),TypeUnit))))
+		    | ("" eval(return(INHERIT))))/>
+
+<code Exp parse=((CODE.ExpA (t=CODE.ExpExp) eval(return(ATTR#(ExpStmt#(t[ATTR.exp]),t[ATTR.type]))))) />
+<code ExpExp parse=(("," (v=CODE.ExpA) eval(t = v[ATTR.type]; inExp = INHERIT[ATTR.exp]; INHERIT = INHERIT[ATTR.type];
+					if(t== INHERIT){INHERIT= ATTR#(Bop2#(",",inExp,v[ATTR.exp]),t)} 
+					else{print("Line " LINE_NO ": type error: " INHERIT " , " t);INHERIT= ATTR#(Bop2#(",",inExp,v[ATTR.exp]),TypeError)}
+					   ) (t2=CODE.ExpExp) eval(return(t2))) 
+                   | ("" eval(return(INHERIT)))) />
+
+<code ExpA parse=((CODE.ExpB (t=CODE.ExpA2) eval(return(t)) )) />
+<code ExpA2 parse=(("and" (v=CODE.ExpB) eval( t = v[ATTR.type]; inExp = INHERIT[ATTR.exp]; INHERIT = INHERIT[ATTR.type];
+					if(t==INHERIT){INHERIT=ATTR#(Bop#("&&",inExp,v[ATTR.exp]),TypeBool)}
+					else if(checkNoError(INHERIT) && checkNoError(t)){print("Line " LINE_NO ": type error: " INHERIT " and " t);INHERIT=ATTR#(Bop#("&&",inExp,v[ATTR.exp]),TypeError)}
+					else{INHERIT=ATTR#(Bop#("&&",inExp,v[ATTR.exp]),TypeError)}
+					    ) (t2=CODE.ExpA2)  eval(return(t2))) 
+                  |("or" (v=CODE.ExpB) eval( t = v[ATTR.type]; inExp = INHERIT[ATTR.exp]; INHERIT = INHERIT[ATTR.type];
+					if(t==INHERIT){INHERIT=ATTR#(Bop#("||",inExp,v[ATTR.exp]),TypeBool)}
+					else if(checkNoError(INHERIT) && checkNoError(t)){print("Line " LINE_NO ": type error: " INHERIT " or " t);INHERIT=ATTR#(Bop#("||",inExp,v[ATTR.exp]),TypeError)}
+					else{INHERIT=ATTR#(Bop#("||",inExp,v[ATTR.exp]),TypeError)}
+					   ) (t2=CODE.ExpA2)  eval(return(t2)))
+                  | ("" eval(return(INHERIT))) ) />
+
+<code ExpB parse=((CODE.ExpC (t=CODE.ExpB2) eval(return(t)) )) />
+<code ExpB2 parse=(("<" (v=CODE.ExpC) eval( t = v[ATTR.type]; inExp = INHERIT[ATTR.exp]; INHERIT = INHERIT[ATTR.type];
+					if(t == INHERIT){return(ATTR#(Bop#("<",inExp,v[ATTR.exp]),TypeBool))}
+					else if((checkNoError(INHERIT)) && (checkNoError(t))){print("Line " LINE_NO ": type error: " INHERIT " <  " t);return(ATTR#(Bop#("<",inExp,v[ATTR.exp]),TypeError))}
+					else{return(ATTR#(Bop#("<",inExp,v[ATTR.exp]),TypeBool))}))  
+                  | (">" (v=CODE.ExpC) eval( t = v[ATTR.type]; inExp = INHERIT[ATTR.exp]; INHERIT = INHERIT[ATTR.type];
+					if(t == INHERIT){return(ATTR#(Bop#(">",inExp,v[ATTR.exp]),TypeBool))}
+					else if((checkNoError(INHERIT)) && (checkNoError(t))){print("Line " LINE_NO ": type error: " INHERIT " >  " t);return(ATTR#(Bop#(">",inExp,v[ATTR.exp]),TypeError))}
+					else{return(ATTR#(Bop#(">",inExp,v[ATTR.exp]),TypeBool))}))
+		  |("=" (v=CODE.ExpC) eval( t = v[ATTR.type]; inExp = INHERIT[ATTR.exp]; INHERIT = INHERIT[ATTR.type];
+					if(t==TypeList#TypeNull && INHERIT : TypeList#(x)){return(ATTR#(Bop#("==",inExp,v[ATTR.exp]),TypeBool))}
+					else if(t == INHERIT){return(ATTR#(Bop#("==",inExp,v[ATTR.exp]),TypeBool))}
+					else if((checkNoError(INHERIT)) && (checkNoError(t))){print("Line " LINE_NO ": type error: " INHERIT " =  " t);return(ATTR#(Bop#("==",inExp,v[ATTR.exp]),TypeError))}
+					else{return(ATTR#(Bop#("==",inExp,v[ATTR.exp]),TypeBool))}))
+                  |("<=" (v=CODE.ExpC) eval( t = v[ATTR.type]; inExp = INHERIT[ATTR.exp]; INHERIT = INHERIT[ATTR.type];
+					if(t == INHERIT){return(ATTR#(Bop#("<=",inExp,v[ATTR.exp]),TypeBool))}
+					else if((checkNoError(INHERIT)) && (checkNoError(t))){print("Line " LINE_NO ": type error: " INHERIT " <=  " t);return(ATTR#(Bop#("<=",inExp,v[ATTR.exp]),TypeError))}
+					else{return(ATTR#(Bop#("<=",inExp,v[ATTR.exp]),TypeBool))}))
+                  |(">=" (v=CODE.ExpC) eval(  t = v[ATTR.type]; inExp = INHERIT[ATTR.exp]; INHERIT = INHERIT[ATTR.type];
+					if(t == INHERIT){return(ATTR#(Bop#(">=",inExp,v[ATTR.exp]),TypeBool))}
+					else if((checkNoError(INHERIT)) && (checkNoError(t))){print("Line " LINE_NO ": type error: " INHERIT " >=  " t);return(ATTR#(Bop#(">=",inExp,v[ATTR.exp]),TypeError))}
+					else{return(ATTR#(Bop#(">=",inExp,v[ATTR.exp]),TypeBool))}))
+                  |( "" eval(return(INHERIT)))) />
+
+<code ExpC parse=((CODE.ExpD (t=CODE.ExpC2) eval(return(t)) )) />
+<code ExpC2 parse=(("+" (v=CODE.ExpD) eval(  t = v[ATTR.type]; inExp = INHERIT[ATTR.exp]; INHERIT = INHERIT[ATTR.type];
+					if(INHERIT : TypeRef#(x) && t:TypeRef#(y)){INHERIT= ATTR#(Bop#("+",inExp,v[ATTR.exp]),TypeRef(y))} 
+					else if(t==TypeInt && INHERIT==TypeInt){INHERIT=ATTR#(Bop#("+",inExp,v[ATTR.exp]),TypeInt)}
+					else if(t==TypeFloat && INHERIT==TypeFloat){INHERIT=ATTR#(Bop#("+",inExp,v[ATTR.exp]),TypeFloat)}
+					else if(INHERIT == TypeFloat && t == TypeInt){print("Line " LINE_NO ": type error: " INHERIT " + " t);INHERIT=ATTR#(Bop#("+",inExp,v[ATTR.exp]),INHERIT)}
+					else if(INHERIT==TypeInt && t==TypeFloat){print("Line " LINE_NO ": type error: " INHERIT " + " t);INHERIT=ATTR#(Bop#("+",inExp,v[ATTR.exp]),INHERIT)}
+					else if(!(checkNoError(INHERIT)) && !(checkNoError(t))){INHERIT=ATTR#(Bop#("+",inExp,v[ATTR.exp]),TypeError)}
+					else if(!(checkNoError(INHERIT))){INHERIT=ATTR#(Bop#("+",inExp,v[ATTR.exp]),TypeError)}
+					else if(!(checkNoError(t))){INHERIT=ATTR#(Bop#("+",inExp,v[ATTR.exp]),INHERIT)}
+					else{print("Line " LINE_NO ": type error: " INHERIT " + " t);INHERIT=ATTR#(Bop#("+",inExp,v[ATTR.exp]),t) }
+					  ) (s=CODE.ExpC2) eval(return(s)) ) 
+		  |("-" (v=CODE.ExpD) eval(  t = v[ATTR.type]; inExp = INHERIT[ATTR.exp]; INHERIT = INHERIT[ATTR.type];
+					if(t==TypeInt && INHERIT==TypeInt){INHERIT=ATTR#(Bop#("-",inExp,v[ATTR.exp]),TypeInt)}
+					else if(t==TypeFloat && INHERIT==TypeFloat){INHERIT=ATTR#(Bop#("-",inExp,v[ATTR.exp]),TypeFloat)}
+					else if(INHERIT == TypeFloat && t == TypeInt){print("Line " LINE_NO ": type error: " INHERIT " - " t);INHERIT =ATTR#(Bop#("-",inExp,v[ATTR.exp]),INHERIT)}
+					else if(INHERIT==TypeInt && t==TypeFloat){print("Line " LINE_NO ": type error: " INHERIT " - " t);INHERIT=ATTR#(Bop#("-",inExp,v[ATTR.exp]),INHERIT)}
+					else if(!(checkNoError(INHERIT)) && !(checkNoError(t))){INHERIT=ATTR#(Bop#("-",inExp,v[ATTR.exp]),TypeError)}
+					else if(!(checkNoError(INHERIT))){INHERIT=ATTR#(Bop#("-",inExp,v[ATTR.exp]),TypeError)}
+					else if(!(checkNoError(t))){INHERIT=ATTR#(Bop#("-",inExp,v[ATTR.exp]),INHERIT)}
+					else{print("Line " LINE_NO ": type error: " INHERIT " - " t);INHERIT=ATTR#(Bop#("-",inExp,v[ATTR.exp]),t) }
+					  ) (s=CODE.ExpC2) eval(return(s)) )
+                  |( "" eval(return(INHERIT)))) />
+
+<code ExpD parse=((CODE.ExpF (t=CODE.ExpD2) eval(return t))) />
+<code ExpD2 parse=(("*" (v=CODE.ExpF) eval( t = v[ATTR.type]; inExp = INHERIT[ATTR.exp]; INHERIT = INHERIT[ATTR.type];
+					if(t==TypeInt && INHERIT==TypeInt){INHERIT=ATTR#(Bop#("*",inExp,v[ATTR.exp]),TypeInt)}
+					else if(t==TypeFloat && INHERIT==TypeFloat){INHERIT=ATTR#(Bop#("*",inExp,v[ATTR.exp]),TypeFloat)}
+					else if(INHERIT == TypeFloat && t == TypeInt){print("Line " LINE_NO ": type error: " INHERIT " * " t);INHERIT=ATTR#(Bop#("*",inExp,v[ATTR.exp]),INHERIT)}
+					else if(INHERIT==TypeInt && t==TypeFloat){print("Line " LINE_NO ": type error: " INHERIT " * " t);INHERIT=ATTR#(Bop#("*",inExp,v[ATTR.exp]),INHERIT)}
+					else if(!(checkNoError(INHERIT)) && !(checkNoError(t))){INHERIT=ATTR#(Bop#("*",inExp,v[ATTR.exp]),TypeError)}
+					else if(!(checkNoError(INHERIT))){INHERIT=ATTR#(Bop#("*",inExp,v[ATTR.exp]),t)}
+					else if(!(checkNoError(t))){INHERIT}else{print("Line " LINE_NO ": type error: " INHERIT " * " t);INHERIT=ATTR#(Bop#("*",inExp,v[ATTR.exp]),t) }
+					  ) (s=CODE.ExpD2) eval(return(s)) ) 
+                  |("/" (v=CODE.ExpF) eval( t = v[ATTR.type]; inExp = INHERIT[ATTR.exp]; INHERIT = INHERIT[ATTR.type];
+					if(t==TypeInt && INHERIT==TypeInt){INHERIT=ATTR#(Bop#("/",inExp,v[ATTR.exp]),TypeInt)}
+					else if(t==TypeFloat && INHERIT==TypeFloat){INHERIT=ATTR#(Bop#("/",inExp,v[ATTR.exp]),TypeFloat)}
+					else if(INHERIT == TypeFloat && t == TypeInt){print("Line " LINE_NO ": type error: " INHERIT " / " t);INHERIT=ATTR#(Bop#("/",inExp,v[ATTR.exp]),INHERIT)}
+					else if(INHERIT==TypeInt && t==TypeFloat){print("Line " LINE_NO ": type error: " INHERIT " / " t);INHERIT= ATTR#(Bop#("/",inExp,v[ATTR.exp]),INHERIT)}
+					else if(!(checkNoError(INHERIT)) && !(checkNoError(t))){INHERIT=ATTR#(Bop#("*",inExp,v[ATTR.exp]),TypeError)}
+					else if(!(checkNoError(INHERIT))){INHERIT=t}
+					else if(!(checkNoError(t))){INHERIT}else{print("Line " LINE_NO ": type error: " INHERIT " / " t);INHERIT=ATTR#(Bop#("*",inExp,v[ATTR.exp]),t) }
+					  ) (s=CODE.ExpD2) eval(return(s)) )
+                  | ("" eval(return(INHERIT))) ) />
+
+<code ExpF parse=((CODE.ExpG (t=CODE.ExpF2) eval(return(t)))) />
+<code ExpF2 parse=(("::" (v=CODE.ExpG) eval(tip=checkType(INHERIT[ATTR.type]); t = v[ATTR.type]; inExp = INHERIT[ATTR.exp]; INHERIT = INHERIT[ATTR.type];
+				if(!(t : TypeList#(x)) && checkNoError(t) && checkNoError(INHERIT)){print( "Line " LINE_NO ": type error:" INHERIT "::" t )}
+                                else if(t :  TypeList#(z) && z == TypeNull){} 
+				else if(t :  TypeList#(z) && z != INHERIT){ print( "Line " LINE_NO ": type error: " INHERIT "::" t )} 
+				if(checkNoError(t) && checkNoError(INHERIT)){INHERIT= ATTR#(LISTEXP#(v[ATTR.exp],inExp,tip),TypeList#(INHERIT))}
+				else if(!(checkNoError(INHERIT)) && !(checkNoError(t))){INHERIT=ATTR#(LISTEXP#(v[ATTR.exp],inExp,tip),TypeList#TypeError)}
+				else if(checkNoError(INHERIT)){INHERIT=ATTR#(LISTEXP#(v[ATTR.exp],inExp,tip),TypeList#(INHERIT))}
+				else{INHERIT=ATTR#(LISTEXP#(v[ATTR.exp],inExp,tip),TypeList#(INHERIT))} 
+				) (s=CODE.ExpF2) eval(return(s)))
+                  | ("" eval(return(INHERIT)))) />
+
+<code ExpG parse=(("-" (v=CODE.ExpG) eval( t = v[ATTR.type];
+				if(t==TypeInt || t==TypeFloat || !checkNoError(t)){return(ATTR#(Uop#("-",v[ATTR.exp]),t))}
+				else{print( "Line " LINE_NO ": type error: - " t ); return(ATTR#(Uop#("-",v[ATTR.exp]),t))}
+					)) 
+                  |("hd" (v=CODE.ExpG) eval(t = v[ATTR.type];
+					if(!(t : TypeList#(x)) && checkNoError(t)){ print( "Line " LINE_NO ": type error: hd " t );return(ATTR#(Uop#("hd",v[ATTR.exp]),TypeError))}
+					else if(t:TypeList#(z)){return(ATTR#(Uop#("hd",v[ATTR.exp]),z))}
+					else{return(ATTR#(Uop#("hd",v[ATTR.exp]),t))}
+					    ))
+		  |("tl" (v=CODE.ExpG) eval(t = v[ATTR.type];
+					if(!(t : TypeList#(x)) && checkNoError(t)){print( "Line " LINE_NO ": type error: tl " t );return(ATTR#(Uop#("tl",v[ATTR.exp]),TypeError))} 
+					else{return(ATTR#(Uop#("tl",v[ATTR.exp]),t))}
+					   ))
+		  |("ref" (t=CODE.ExpG) eval(return(ATTR#(t[ATTR.exp],TypeRef#(t[ATTR.type])))))
+		  |("!" (v=CODE.ExpG) eval(t = v[ATTR.type];
+					if(!(t : TypeRef#(x)) && checkNoError(t) ){ print("Line " LINE_NO ": type error: !" t)}
+					if(t:TypeRef#(z)){return((ATTR#(v[ATTR.exp],z)))}
+					else{return((ATTR#(v[ATTR.exp],t)))} 
+					  ))
+		  |("not" (v=CODE.ExpG) eval(t = v[ATTR.type];
+					if(t != TypeBool && checkNoError(t)){ print();return(ATTR#(Uop#("!",v[ATTR.exp]),TypeError))}
+					else if(!checkNoError(t)){return((ATTR#(Uop#("!",v[ATTR.exp]),TypeError)))}
+					else{return(ATTR#(Uop#("!",v[ATTR.exp]),TypeBool))}
+					    ))
+		  | ((t=CODE.ExpH) eval(return(t)))) /> 
+
+<code ExpH parse=( ((id=ID) eval(INHERIT=id) (tup=CODE.ExpH4)  eval(t=LookupVariable(id);if(t==""){print("Line " LINE_NO ": type error: undefined variable: " id);return(CODE.ATTR#(id,TypeError))}else if(t: TypeTuple#(x)){
+ ret=HEAD(x);
+ tail =TAIL(x);
+if(tail!=NULL){
+   func = HEAD(tail) :: TAIL();
+   tail = TAIL(tail);
+}
+if(tup != NULL){
+  param = HEAD(tup) :: TAIL();
+  tup = TAIL(tup);
+}
+
+for ( p = tail; p != NULL; p = TAIL(p)) {
+  func = HEAD(p) :: func;
+}
+for(q=tup; q != NULL; q=TAIL(q)){
+  param = HEAD(q) :: param;
+}
+
+for(test1 = func; test1 != NULL; test1 = TAIL(test1)){
+   test = HEAD(test1); 
+   test2 = HEAD(param);
+   if(test == test2){}
+   else if(test2 == TypeNull){print("Line " LINE_NO ": type error: missing parameter "  test " in call to " id)}
+   else if(test2 : TypeList#(it1) && test :TypeList#(it2)){
+     if(it1 != TypeNull){
+	print("Line " LINE_NO ": type error: " it2 " => " it1)
+    } 
+  }
+   else{print("Line " LINE_NO ": type error: " test " => " test2)}
+   param = TAIL(param);
+}
+return(ATTR#(id,ret));
+}else{return(ATTR#(id,t))}))  
+		 | ((v=INT) eval(return (CODE.ATTR#(v,TypeInt))))
+                 | ((v=FLOAT) eval(return(CODE.ATTR#(v,TypeFloat))))
+		 | ("(" (t=CODE.Start2) ")" eval(return( CODE.ATTR#(Par#(t[ATTR.exp]),t[ATTR.type]))))
+                 | ("[" (t=CODE.ExpH2) eval(return (CODE.ATTR#(t[ATTR.exp],TypeList#(t[ATTR.type])))))) />
+<code ExpH2 parse=(((t=CODE.ExpH5A) "]" eval(
+					tup = t[ATTR.exp];
+					type = HEAD(t[ATTR.type]);
+					tip = checkType(type);
+					expr = Comma#(tip,HEAD(t[ATTR.exp]),0);
+					tup = TAIL(tup);	
+					for ( p = tup; p != NULL; p = TAIL(p)) {
+						x=HEAD(p);
+						expr=Comma#(tip,x,expr);
+					}
+					return(ATTR#(expr,type))
+					    ))
+                | ("]" eval(return(ATTR#(0,TypeNull))))) />
+<code ExpH4 parse=(( "(" (t=CODE.ExpH5) ")" eval(return(t)) ) 
+		  |( "" ))/>
+<code ExpH5 parse=((CODE.ExpA (t=CODE.ExpH52) eval(return(t)) )
+                  |( "" eval(return(TypeNull))))/>
+
+<code ExpH5A parse=(((b=CODE.ExpA) eval(INHERIT=(ATTR#(b[ATTR.exp]::TAIL(),(b[ATTR.type]::TAIL())))) (a=CODE.ExpH52A) eval(return(a))))/>
+<code ExpH52A parse=(( eval(c=INHERIT) "," (t=CODE.ExpA) eval(INHERIT=(ATTR#(t[ATTR.exp]::c[ATTR.exp],t[ATTR.type]::c[ATTR.type]))) (t=CODE.ExpH52A) eval(return(t)) )
+                     | (eval(c=INHERIT) "" eval(return(c)) ))/>
+
+
+<code ExpH52 parse=(( eval(c=INHERIT) "," (t=CODE.ExpA) eval(INHERIT=(ATTR#(t[ATTR.exp]::c[ATTR.exp],t[ATTR.type]::c[ATTR.type]))) (t=CODE.ExpH52) eval(return(INHERIT)) )
+                     | (eval(c=INHERIT) "" eval(return(c)) ))/>
+
+
+<code ExpTemp parse=(( "(" (t=CODE.TempExp) ")" eval(return(t)) ) )/>
+<code TempExp parse=(((b=CODE.TempExpA) eval(INHERIT=(b::TAIL())) (a=CODE.TempExp2) eval(return(a)))
+		    |( "" eval(return((TypeNull::TAIL())))))/>
+<code TempExp2 parse=(( eval(c=INHERIT) "," (t=TempExpA) eval(INHERIT=(t::c)) (t=CODE.TempExp2) eval(return(INHERIT)) )
+		     | (eval(c=INHERIT) "" eval(return(c)) ))/>
+<code TempExpA parse=(((id=ID) ":" (t=CODE.MLtype) eval(insert_entry(id,t); return(t))))/>

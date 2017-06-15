@@ -1,0 +1,310 @@
+<parameter infile message="input file name"/>
+<input from=(infile) syntax="proj.code" to=ast/>
+
+
+<*============== control flow graph IR and management =====*>
+
+<define cfg_nodes NULL/> <* resulting CFG nodes generated *>
+<define cfg_edges NULL/> <* resulting CFG edges generated *>
+<define label_index 0/>  <* index of new basic blocks created *>
+<define label_list NULL/>  <* index of new basic blocks created *>
+
+<* a function that returns a new label *>
+<xform new_label > GLOBAL.label_index=GLOBAL.label_index+1; GLOBAL.label_index </xform>
+
+<* basic block IR date structure *>
+<code BasicBlock pars=(label, stmts)>
+B@label@[label=" @CODE.print_list#(stmts,"; ")@"]
+</code>
+
+<* CFG edge IR date structure *>
+<code Flow pars=(from, to)>
+B@from@ -> B@to@
+</code>
+
+<code CFG pars=(nodes, edges)>
+digraph CFG
+{
+  @CODE.print_l2#(nodes,"\n")@
+  @CODE.print_l2#(edges,"\n")@
+}
+</code>
+
+<code print_l2 pars=(content,sep)>
+@((TAIL(content) : NULL)? HEAD(content) sep :
+  (print_l2#(TAIL(content),sep) HEAD(content) sep))@
+</code>
+
+
+<* print out the content backward *>
+<code print_list pars=(content,sep)>
+@((TAIL(content) : NULL)? HEAD(content) " " :
+  (print_list#(TAIL(content),sep) HEAD(content)  ";\n "))@
+</code>
+
+<* a function for generate a new basic block *>
+<xform new_basicblock pars=(stmts)>
+label = GLOBAL.label_index;
+GLOBAL.cfg_nodes = BasicBlock#(label, stmts) :: GLOBAL.cfg_nodes;
+GLOBAL.label_index = GLOBAL.label_index + 1;
+label
+</xform>
+
+<xform new_flow pars=(from, to)>
+GLOBAL.cfg_edges = Flow#(from, to) :: GLOBAL.cfg_edges;
+</xform>
+
+<****translation schemes for control flow graph contruction **************>
+<* implement translation scheme for all productions of non-terminal Goal *>
+<xform BuildCFG__Goal pars=(input, begin)>
+  CODE.Goal#(block) = input;
+  for (p = block; p != NULL; p = TAIL(p)) {
+    cur = HEAD(p);
+    switch (cur) {
+    case CODE.Uop2 : begin= XFORM.BuildU2(cur,begin);
+    }
+}
+  begin
+</xform>
+<*LET,WHILE2,WHILE,PLIT,IF,Par,VarDec,Comma,ListVar,LISTEXP,LISTEXP2,Bop,Bop2,Uop,Uop2 *>
+<xform BuildCFG__Goal2 pars=(input, begin)>
+  block = input;
+    cur = HEAD(block);
+    switch (cur) {
+    case CODE.ExpStmt : begin =  cur :: begin; 
+    case CODE.Comma : begin = cur :: begin;
+    case CODE.LET : begin =  XFORM.BuildCFG__LET(cur,begin);
+    case CODE.WHILE : begin= XFORM.BuildCFG__While(cur,begin);
+    case CODE.WHILE2 : begin =  XFORM.BuildCFG__While(cur,begin);
+    case CODE.WHILE : begin= XFORM.BuildCFG__While(cur,begin);
+    case CODE.PLIT : begin =  XFORM.BuildCFG__PLIT(cur,begin);
+    case CODE.IF : begin = XFORM.BuildCFG__IF(cur,begin);
+    case CODE.Par : begin=  cur :: begin; <* should never be used*>
+    case CODE.VarDec : begin =  cur :: begin;
+    case CODE.ListVar : begin=  cur :: begin; <*should never be used*>
+    case CODE.LISTEXP : begin =  cur :: begin;<*should never be used*>
+    case CODE.LISTEXP2 : begin = cur :: begin;<*should never be used*>
+    case CODE.Bop : begin=  cur :: begin;
+    case CODE.Bop2 : begin =  cur :: begin;
+    case CODE.Uop : begin =  XFORM.BuildCFG__Uop(cur,begin);
+	 default : begin = cur :: begin; 
+    }
+  begin
+</xform>
+
+<xform BuildCFG__LET pars=(input,begin)>
+  LET#(one,two) = input;
+  b_1 = BuildCFG__Goal2(one,begin);
+    
+  b_2 = BuildCFG__Goal2(two,b_1);
+b_2
+</xform>
+
+
+<xform BuildCFG__IF pars=(input,begin)>
+  IF#(one, two, three) = input;
+  if(begin == ""){
+   c= CODE.NewIF#(one);
+  } 
+  else{
+       c= CODE.NewIF#(one) :: begin;
+  }
+  b_init = new_basicblock(c); 
+ 
+    cur = GLOBAL.label_list;
+    for(p = cur; p != NULL; p = TAIL(p)){
+      i = HEAD(p);
+      new_flow(i,b_init);
+    }
+    GLOBAL.label_list= NULL; 
+ 
+  b_first_label= GLOBAL.label_index;
+  new_flow(b_init, b_first_label);
+  
+  b_first = BuildCFG__Goal2(two,"");
+  if(b_first != ""){
+    b_end1_label = new_basicblock(b_first); <* wrap up the previous basic block *>   
+    GLOBAL.label_list = b_end1_label :: GLOBAL.label_list;
+  }
+  
+  
+  b_second_label = GLOBAL.label_index;
+  new_flow(b_init, b_second_label);
+  b_second = BuildCFG__Goal2(three,"");
+  if(b_second != ""){
+    b_end1_label = new_basicblock(b_second); <* wrap up the previous basic block *>  
+    GLOBAL.label_list = b_end1_label :: GLOBAL.label_list;
+  }
+
+  "" <* the exit block is currently empty*>
+</xform>
+
+<xform BuildCFG__Uop pars=(input,begin)>
+  Uop#(op,opd) = input;
+  b_2 = BuildCFG__Goal2(op,begin);
+  if(b_2 != ""){
+    c = Uop#(b_2,";");
+  }
+  else {
+    c = "";   
+  }
+b_2
+</xform>
+
+<xform BuildCFG__PLIT pars=(input,begin)>
+  PLIT#(one,two) = input;
+  b_1 = BuildCFG__Goal2(one,begin);
+  b_2 = BuildCFG__Goal2(two,b_1);
+  b_2 <* the exit block is currently empty*>
+</xform>
+
+
+<* implement translation scheme for all productions of non-terminal For *>
+<xform BuildU2 pars=(input,begin)>
+  Uop2#(op,opd) = input;
+  if(opd == ""){
+     cur  = HEAD(op);
+    	b_init = BuildCFG__Goal2(op,begin);
+	if(b_init != ""){
+	   first = new_basicblock(b_init);
+	   GLOBAL.label_list = first :: GLOBAL.label_list;
+	}
+  }
+  else{
+    front = XFORM.BuildCFG__Goal2(op,begin);
+    XFORM.BuildU2(opd,front);
+  }
+  "" <* the exit block is currently empty*>
+</xform>
+
+
+<xform BuildCFG__While pars=(input,begin)>
+  switch(input){
+    case CODE.WHILE2 :   WHILE2#(one,two) = input;
+    case CODE.WHILE :    WHILE#(one,two) = input;
+  }
+  if(begin != ""){
+      b_begin = new_basicblock(begin); <*wrap up block*> 
+
+      cur = GLOBAL.label_list;
+      for(p = cur; p != NULL; p = TAIL(p)){
+        i = HEAD(p);
+        new_flow(i,b_begin);
+      }
+      GLOBAL.label_list= NULL;
+ 
+      b_test = new_basicblock(CODE.NewWhile#(one));
+      new_flow(b_begin, b_test);   
+  }
+  else{
+    b_test = new_basicblock(NewWhile#(one));
+    cur = GLOBAL.label_list;
+    for(p = cur; p != NULL; p = TAIL(p)){
+      i = HEAD(p);
+      new_flow(i,b_test);
+    }
+    GLOBAL.label_list= NULL;
+  }
+  body_label= GLOBAL.label_index; <* label for the first basic block of body *>
+  body_next = XFORM.BuildCFG__Goal2(two,""); <* lable of the last basic block from loop body *>
+  body_last = new_basicblock(body_next); <* last basic block from loop body*>
+     
+  GLOBAL.label_list = b_test :: GLOBAL.label_list;
+
+  <* exit_label = GLOBAL.label_index; new_label(); exit label for the loop*>
+  <* new generate cfg edges *>
+  new_flow(b_test, body_label);
+ <* new_flow(b_test, exit_label); *>
+  new_flow(body_last, b_test);
+  "" <* the exit block is currently empty*>
+</xform>
+
+
+
+<* implement translation scheme for all productions of non-terminal For *>
+<xform BuildCFG__For pars=(input,begin)>
+  For#(var,lb,ub,incr,body) = input;
+  b_init = new_basicblock(CODE.Bop#("=",var,lb) :: begin); <* wrap up the previous basic block *>
+  b_test = new_basicblock(Bop#(">",var,ub)); <* new basic block for test *>
+  body_label= GLOBAL.label_index; <* label for the first basic block of body *>
+  body_next = XFORM.BuildCFG__Goal(body,""); <* lable of the last basic block from loop body *>
+  body_last = new_basicblock(incr::body_next); <* last basic block from loop body*>
+  exit_label = new_label(); <* exit label for the loop*>
+  <* new generate cfg edges *>
+  new_flow(b_init, b_test);
+  new_flow(b_test, body_label);
+  new_flow(b_test, exit_label);
+  new_flow(body_last, b_test);
+  "" <* the exit block is currently empty*>
+</xform>
+
+
+<xform finish pars=(sep)>
+  label = new_basicblock(sep);
+  cur = GLOBAL.label_list;
+  for(p = cur; p != NULL; p = TAIL(p)){
+    i = HEAD(p);
+    new_flow(i,label);
+  }
+  GLOBAL.label_list= NULL;
+</xform>
+
+<*===================== driver code ===================*>
+<* start evaluation *>
+<eval last = BuildCFG__Goal(ast, "");
+       finish("exit");
+/>
+<* write the 3-address ir to the given output file*>
+<output from=(CFG#(cfg_nodes, cfg_edges)) syntax="proj.code" to="dotFile.dot" />
+
+<define symTable MAP(ID,"int"|"float"|"") />
+<code TypeError match=CODE.Type/>
+<code TypeInt match=CODE.Type/>
+<code TypeFloat match=CODE.Type/>
+
+
+<* look up a variable name from a list of symble tables*>
+<xform LookupVariable pars=(varName)  symTableList=GLOBAL.symTable >
+  for ( p = symTableList; p != NULL; p = TAIL(p)) {
+     curTable = HEAD(p);
+     res = curTable[varName];
+     if (res != "") RETURN res;
+} </xform>
+
+<xform checkNoError pars=(type)>
+p=type;
+if(p == TypeError){return FALSE;}
+
+return TRUE;
+</xform>
+
+
+<xform checkType pars=(type)>
+p=type;
+if(p == TypeInt){return "int";}
+else if(p == TypeFloat) {return "float";}
+else{return "WeDontKnow"}
+</xform>
+
+<xform InScope pars=(varName)  symTableList=GLOBAL.symTable >
+  for ( p = HEAD(symTableList); p != NULL; p = TAIL(p)) {
+     curTable = HEAD(p);
+     res = curTable[varName];
+     if (res != "") RETURN res;
+} </xform>
+
+<xform insert_entry pars=(id,type) symTableList=GLOBAL.symTable >
+  (HEAD(symTableList))[id]=type;
+  ""
+</xform>
+<xform pop_scope >
+  top = HEAD(GLOBAL.symTable);
+  GLOBAL.symTable = TAIL(GLOBAL.symTable);
+  top
+</xform>
+<xform push_scope>
+  GLOBAL.symTable = MAP{} :: GLOBAL.symTable;
+</xform>
+
+<* print out the symbol table content *>
+<eval print(symTable) />

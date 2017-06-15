@@ -1,0 +1,29 @@
+digraph CFG
+{
+  B0[label="  int x = 0;
+ float z = 2.0;
+ list<float>* y = new list<float>(1.0,0);
+ (((x<4)&&(x>3)))?;
+ "]
+  B1[label="  y=new list<float> (z,new list<float>(z,0));
+ "]
+  B2[label="  x=x/2;
+ "]
+  B3[label=" (((x==0)||(z>1.0)))? "]
+  B4[label="  (x=6-1;
+   z=2.1);
+ "]
+  B5[label="  z=1.0*z;
+ "]
+  B6[label=" exit "]
+  
+  B0 -> B1
+  B0 -> B2
+  B2 -> B3
+  B1 -> B3
+  B3 -> B4
+  B3 -> B5
+  B5 -> B6
+  B4 -> B6
+  
+}
